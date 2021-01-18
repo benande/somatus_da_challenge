@@ -1,0 +1,207 @@
+---
+title: "Somatus Data Analysis Challenge"
+output:
+  html_document:
+    theme: yeti
+---
+
+## Data Summarization Questions
+
+```{r include=FALSE, warning = FALSE}
+# Load Libraries
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+
+# Load Data
+summary_data <- read_csv("./data/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv")
+claims_data <- read_csv("./data/DE1_0_2008_to_2010_Inpatient_Claims_Sample_1.csv")
+
+# Summary Data Manipulation
+summary_data <- summary_data %>% 
+  mutate(
+    birth_date = ymd(BENE_BIRTH_DT),
+    death_date = ymd(BENE_DEATH_DT),
+    sex = factor(BENE_SEX_IDENT_CD, labels = c('Male','Female')),
+    race = factor(BENE_RACE_CD, labels = c('White','Black','Others','Hispanic')),
+    has_esrd = BENE_ESRD_IND == 'Y',
+    has_alzheimer = SP_ALZHDMTA == 1,
+    has_heart_failure = SP_CHF == 1,
+    has_chronic_kidney = SP_CHRNKIDN == 1,
+    has_cancer = SP_CNCR == 1,
+    has_copd = SP_COPD == 1,
+    has_depression = SP_DEPRESSN == 1,
+    has_diabetes = SP_DIABETES == 1,
+    has_ischemic_heart = SP_ISCHMCHT == 1,
+    has_osteoporosis = SP_OSTEOPRS == 1,
+    has_arthritis = SP_RA_OA == 1,
+    has_stroke_tia = SP_STRKETIA == 1
+)
+
+# Inpatient Claims Data Manipulation
+claims_data <- claims_data %>% 
+  mutate(
+    start_dt = ymd(CLM_FROM_DT),
+    thru_dt = ymd(CLM_THRU_DT),
+    admit_dt = ymd(CLM_ADMSN_DT),
+    discharge_dt = ymd(NCH_BENE_DSCHRG_DT),
+    payment_amt = CLM_PMT_AMT + NCH_PRMRY_PYR_CLM_PD_AMT
+  )
+
+claims_data <- claims_data %>% 
+  unite("ICD9_str", ADMTNG_ICD9_DGNS_CD, ICD9_DGNS_CD_1:ICD9_DGNS_CD_10, sep=",", remove=FALSE, na.rm=TRUE)
+
+# Merge Data
+all_data <- summary_data %>% left_join(claims_data)
+
+all_data <- all_data %>% 
+  mutate(
+    has_eskd_ckd = str_detect(ICD9_str,"5856|5855|5854|5853|5852|5851|5859") | has_esrd,
+    kd_type = case_when(
+      str_detect(ICD9_str,"5856") | has_esrd ~ "ESKD",
+      str_detect(ICD9_str,"5855") ~ "CKD Stage 5",
+      str_detect(ICD9_str,"5854") ~ "CKD Stage 4",
+      str_detect(ICD9_str,"5853") ~ "CKD Stage 3",
+      str_detect(ICD9_str,"5852") ~ "CKD Stage 2",
+      str_detect(ICD9_str,"5851") ~ "CKD Stage 1",
+      str_detect(ICD9_str,"5859") ~ "CKD Stage Unspecified",
+      TRUE ~ "None"
+    )
+  )
+
+all_data <- all_data %>% 
+  mutate(
+    kd_type = factor(kd_type, levels = c(
+      "ESKD","CKD Stage 5","CKD Stage 4","CKD Stage 3","CKD Stage 2","CKD Stage 1","CKD Stage Unspecified","None","Total")
+    )
+  )
+```
+
+
+### 1. How many total CKD and ESKD members are there in the data across all years?  How many members are there by kidney disease stage?
+
+```{r echo = FALSE, results = 'asis', message = FALSE}
+grouped_counts <- all_data %>% 
+  filter(kd_type != "None") %>% 
+  group_by(kd_type) %>% 
+  summarise(members = n_distinct(DESYNPUF_ID))
+
+sum_row <- lapply(grouped_counts,function(z) if (is.numeric(z)) sum(z) else '')
+sum_row[1] <- "Total"
+results <- rbind(grouped_counts,sum_row)
+colnames(results) <- c("Kidney Disease Stage","Members")
+
+kable(results, format.args = list(big.mark = ",")) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
+  column_spec(1, width = "15em") %>% 
+  row_spec(dim(results)[1], bold = TRUE)
+```
+
+### 2. How many admissions did CKD and ESKD members have in the data across all years, by kidney disease stage?
+
+```{r echo = FALSE, results = 'asis', message = FALSE}
+grouped_counts <- all_data %>% 
+  filter(kd_type != "None") %>% 
+  group_by(kd_type) %>% 
+  summarise(admits = n_distinct(CLM_ID))
+
+sum_row <- lapply(grouped_counts,function(z) if (is.numeric(z)) sum(z) else '')
+sum_row[1] <- "Total"
+results <- rbind(grouped_counts,sum_row)
+colnames(results) <- c("Kidney Disease Stage","Admissions")
+
+kable(results, format.args = list(big.mark = ",")) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
+  column_spec(1, width = "15em") %>% 
+  row_spec(dim(results)[1], bold = TRUE)
+```
+
+### 3. What was the total paid amount for admissions for CKD and ESKD members across all years, by kidney disease stage?
+
+```{r echo = FALSE, results = 'asis', message = FALSE}
+grouped_counts <- all_data %>% 
+  filter(kd_type != "None") %>% 
+  group_by(kd_type) %>% 
+  summarise(paid = sum(payment_amt, na.rm = TRUE))
+
+sum_row <- lapply(grouped_counts,function(z) if (is.numeric(z)) sum(z) else '')
+sum_row[1] <- "Total"
+results <- rbind(grouped_counts,sum_row)
+results$paid <- scales::dollar(results$paid)
+colnames(results) <- c("Kidney Disease Stage","Paid Amount")
+
+kable(results, align = 'lr', format.args = list(big.mark = ",")) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
+  column_spec(1, width = "15em") %>% 
+  row_spec(dim(results)[1], bold = TRUE)
+```
+
+### 4. What are the most common co-morbid chronic conditions for CKD and ESKD members?
+
+```{r echo = FALSE, results = 'asis', message = FALSE}
+comorbidities <- all_data %>% 
+  filter(kd_type != "None") %>% 
+  group_by(DESYNPUF_ID) %>% 
+  summarise(
+    has_alzheimer = max(has_alzheimer),
+    has_heart_failure = max(has_heart_failure),
+    has_chronic_kidney = max(has_chronic_kidney),
+    has_cancer = max(has_cancer),
+    has_copd = max(has_copd),
+    has_depression = max(has_depression),
+    has_diabetes = max(has_diabetes),
+    has_ischemic_heart = max(has_ischemic_heart),
+    has_osteoporosis = max(has_osteoporosis),
+    has_arthritis = max(has_arthritis),
+    has_stroke_tia = max(has_stroke_tia)
+  ) %>% 
+  summarise(
+    comorbid_alzheimer = sum(has_alzheimer)/n(),
+    comorbid_heart_failure = sum(has_heart_failure)/n(),
+    #comorbid_chronic_kidney = sum(has_chronic_kidney)/n(),
+    comorbid_cancer = sum(has_cancer)/n(),
+    comorbid_copd = sum(has_copd)/n(),
+    comorbid_depression = sum(has_depression)/n(),
+    comorbid_diabetes = sum(has_diabetes)/n(),
+    comorbid_ischemic_heart = sum(has_ischemic_heart)/n(),
+    comorbid_osteoporosis = sum(has_osteoporosis)/n(),
+    comorbid_arthritis = sum(has_arthritis)/n(),
+    comorbid_stroke_tia = sum(has_stroke_tia)/n()
+  )
+
+results <- gather(comorbidities,
+  "comorbid_alzheimer",
+  "comorbid_heart_failure",
+  #"comorbid_chronic_kidney",
+  "comorbid_cancer",
+  "comorbid_copd",
+  "comorbid_depression",
+  "comorbid_diabetes",
+  "comorbid_ischemic_heart",
+  "comorbid_osteoporosis",
+  "comorbid_arthritis",
+  "comorbid_stroke_tia",
+  key = "Comorbidity",
+  value = "Rate") 
+results$Comorbidity <- c(
+  "Alzheimer",
+  "Heart Failure",
+  #"Chronic Kidney Disease",
+  "Cancer",
+  "Chronic Obstructive Pulmonary Disease",
+  "Depression",
+  "Diabetes",
+  "Ischemic Heart Disease",
+  "Osteoporosis",
+  "Rheumatoid Arthritis or Osteoarthritis",
+  "Stroke/Transient Ischemic Attack"
+)
+results$Rate <- scales::percent(results$Rate, accuracy = 1)
+results <- results %>% 
+  arrange(desc(Rate))
+
+kable(results, align = 'lr') %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
+  column_spec(1, width = "25em")
+```
