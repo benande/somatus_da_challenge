@@ -57,6 +57,7 @@ all_data <- summary_data %>% left_join(claims_data)
 
 all_data <- all_data %>% 
   mutate(
+    admit_len = discharge_dt - admit_dt,
     has_eskd_ckd = str_detect(ICD9_str,"5856|5855|5854|5853|5852|5851|5859") | has_esrd,
     kd_type = case_when(
       str_detect(ICD9_str,"5856") | has_esrd ~ "ESKD",
@@ -182,7 +183,7 @@ results <- gather(comorbidities,
   "comorbid_osteoporosis",
   "comorbid_arthritis",
   "comorbid_stroke_tia",
-  key = "Comorbidity",
+  key = "Co-morbidity",
   value = "Rate") 
 results$Comorbidity <- c(
   "Alzheimer",
@@ -204,4 +205,76 @@ results <- results %>%
 kable(results, align = 'lr') %>% 
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
   column_spec(1, width = "25em")
+```
+
+---
+
+## Strategy to Reduce Inpatient Admissions in the CKD/ESKD Population
+
+Reducing inpatient admissions should be a high priority in the interest of improving quality of life and reducing cost for those with Chronic or End Stage Kidney Disease. Based on the data available, two strategies can contribute to an overall reduction in admissions.
+
+### Preventative Measures to Limit Disease Progression
+
+Within the available data, End Stage Kidney Disease represents approximately 68% of members, 77% of admissions, and 80% of overall cost. It is the only disease category with an admittance rate significantly higher than 1 (about 1.6 admissions per member). Additionally, the most common co-morbidities of CKD/ESKD such as heart disease, heart failure, and diabetes are at least partially due to modifiable behaviors. Therefore, the highest value in terms of both quality of life and reduction of costs and admissions can come from preventing the disease from progressing to ESKD in the first place. Preventative interventions such as nutritional and exercise education early on with case management and care navigation can limit the progression of the disease. 
+
+### Limiting Readmissions for ESKD Patients 
+
+Multiple admissions for a single patient can indicate one of several shortcomings in care[^footnote]:
+
+* The patient was discharged before they were ready
+* The patient is unable to manage their care at home
+* Inadequate follow-up after discharge
+
+Having a coordination plan across caregivers can help identify and remove roadblocks to proper care and improve information sharing across care entities.
+
+```{r echo = FALSE, results = 'asis', message = FALSE}
+grouped_counts <- all_data %>% 
+  filter(kd_type != "None") %>% 
+  group_by(kd_type) %>% 
+  summarise(
+    members = n_distinct(DESYNPUF_ID),
+    admits = n_distinct(CLM_ID),
+    paid = sum(payment_amt, na.rm = TRUE)
+    ) %>% 
+  mutate(member_pct = round(members / sum(members),2), .after = members) %>% 
+  mutate(admit_pct = round(admits / sum(admits),2), .after = admits) %>% 
+  mutate(paid_pct = round(paid / sum(paid),2), .after = paid)
+
+sum_row <- lapply(grouped_counts,function(z) if (is.numeric(z)) sum(z) else '')
+sum_row[1] <- "Total"
+results <- rbind(grouped_counts,sum_row)
+
+results <- results %>% 
+  mutate(
+    admit_rate = round(admits/members,2),
+    cost_per_admit = round(paid/admits,0)
+    )
+
+results$paid <- scales::dollar(results$paid)
+results$member_pct <- scales::percent(results$member_pct)
+results$admit_pct <- scales::percent(results$admit_pct)
+results$paid_pct <- scales::percent(results$paid_pct)
+results$cost_per_admit <- scales::dollar(results$cost_per_admit)
+#colnames(results) <- c("Kidney Disease Stage","Paid Amount")
+columnNames <- c("Disease Stage","Members","Member %","Admissions","Admission %","Total Cost","Cost %","Admission Rate","Cost Per Admission")
+
+kable(results, col.names = columnNames, align = 'lrrrrrrrr', format.args = list(big.mark = ",")) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left") %>% 
+  column_spec(1, width = "15em") %>% 
+  row_spec(dim(results)[1], bold = TRUE)
+```
+[^footnote]: Reducing Avoidable Rehospitalization in ESRD: A Shared Accountability (https://jasn.asnjournals.org/content/25/9/1891)
+
+```{r include = FALSE, results = 'asis', message = FALSE}
+dgns_tbl <- all_data %>% 
+  filter(kd_type == "ESKD" & !is.na(ADMTNG_ICD9_DGNS_CD)) %>% 
+  group_by(ADMTNG_ICD9_DGNS_CD) %>% 
+  summarise(admits = n()) %>% 
+  mutate(admit_pct = admits/sum(admits)) %>% 
+  arrange(desc(admits))
+
+dgns_tbl$admit_pct <- scales::percent(dgns_tbl$admit_pct)
+# shortness of breath, pneumonia, chest pain, heart failure
+kable(dgns_tbl,align = 'lrr') %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE, position = "left")
 ```
